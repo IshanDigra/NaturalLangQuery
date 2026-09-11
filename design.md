@@ -1,207 +1,77 @@
-```markdown
-# AI Vehicle Search Engine
-
-## Endpoints
-
-### `GET /stats` -- catalogue totals and breakdowns
-
-### `GET /health` -- status, whether the LLM path is enabled, which model
-
-```bash
-curl -s [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-# {"status":"ok","llm_enabled":false,"llm_model":null,"vehicle_count":453}
-
-```
-
-### `GET /examples` -- sample demo queries
-
-```bash
-curl -s [http://127.0.0.1:8000/examples](http://127.0.0.1:8000/examples)
-
-```
-
-### `POST /cache/reset` -- clear the in-memory query cache
-
-```bash
-curl -s -X POST [http://127.0.0.1:8000/cache/reset](http://127.0.0.1:8000/cache/reset)
-
-```
-
-## Eval harness
-
-```bash
-python -m tests.eval        # fallback parser only, no key needed
-python -m tests.eval --llm  # also exercises the Gemini path (needs GEMINI_API_KEY)
-
-```
-
-Runs ~15 queries with expected filter values through the parser(s) and
-prints a pass rate. See `tests/eval_queries.json` to add cases.
-
-## Project layout
-
-```
-app/
-  main.py            FastAPI app and endpoints
-  models.py          VehicleFilter / Vehicle / response schemas (the shared contract)
-  db.py              SQLite connection + schema
-  catalog.py         ~40 curated real make/model combos (also used by the fallback parser)
-  enums.py           Canonical vocab (body types, fuel types, cities, ...)
-  concepts.py        Fuzzy-phrase -> filter mapping, shared by the LLM prompt and the fallback parser
-  sql_builder.py     VehicleFilter -> parameterized SQL (the only place SQL text is built)
-  validation.py      Clamps/drops anything unsafe before it reaches SQL
-  relaxation.py      Never-empty-results widening/dropping logic
-  llm_parser.py      Gemini REST call -> VehicleFilter
-  fallback_parser.py Regex/keyword parser -> VehicleFilter (also the offline path)
-  cache.py           In-memory query cache
-  explain.py         VehicleFilter -> one-sentence explanation
-scripts/
-  seed.py            Generates data/vehicles.db (~450 rows, fixed random seed)
-tests/
-  eval.py            Eval harness
-  eval_queries.json  Eval cases
-
-```
-
-## Demo script
-
-1. `GET /health` -> shows whether the LLM path is enabled
-2. `"Show SUVs under 15L"` -> check `interpreted_filters`
-3. `"Family cars with high safety ratings"` -> fuzzy concept resolves to `seats_min=6, safety_rating_min=4`
-4. `"Diesel automatic below 80k km"` -> check the generated `sql`
-5. Same query with `?no_llm=true` -> `parser: "fallback"`, identical answer, no API call
-6. `"Electric convertible with 10 seats under 1 lakh"` -> `relaxed` explains what was widened
-7. `python -m tests.eval` -> pass rate on screen
-
-```
-
-```markdown
-# Design notes
+# Design Document: AI Vehicle Search Engine
 
 ![Architecture](data/architecture.png)
 
-## Why the LLM never writes SQL
+This document outlines the core architectural choices and design principles behind the AI Vehicle Search Engine. The primary goal is to provide a robust, injection-safe, and gracefully degrading search experience over a vehicle catalogue.
 
+---
+
+## Core Design Principles
+
+### 1. Why the LLM never writes SQL
 
 ```
-
 sentence -> parser (LLM or regex fallback) -> VehicleFilter -> validate/clamp -> parameterized SQL -> results
-
 ```
 
-`app/sql_builder.py` is the only module in the codebase that produces SQL
-text, and every value it places into a query arrives as a bound `?`
-parameter -- including everything that came out of the model. This buys
-three things at once:
+The system strictly decouples natural language understanding from database querying. `app/sql_builder.py` is the **only module** in the codebase that produces SQL text, and every value it places into a query arrives as a bound `?` parameter—including all data extracted by the model.
 
-- **No injection surface.** The model's output never becomes part of the SQL
-  string, so there's nothing to sanitize or escape.
-- **No hallucinated vehicles.** Every row in a response came from a
-  `SELECT` against the real table. The model can misunderstand a sentence,
-  but it cannot invent a car that doesn't exist.
-- **Testability.** `app/fallback_parser.py` and `app/llm_parser.py` both
-  produce the same `VehicleFilter` type, so `tests/eval.py` can assert on
-  the *understanding* of a sentence without needing a live model or a
-  running server.
+This approach provides three major benefits:
+- **No SQL Injection Surface:** The model's output never becomes part of the raw SQL string, entirely eliminating the need to sanitize or escape LLM outputs.
+- **No Hallucinated Vehicles:** Every row returned in a response comes from a real `SELECT` against the database. The model may misunderstand a sentence, but it cannot invent a car that doesn't exist.
+- **High Testability:** Both `app/fallback_parser.py` and `app/llm_parser.py` produce the exact same `VehicleFilter` type. This allows `tests/eval.py` to assert the *understanding* of a sentence without requiring a live model or a running server.
 
-## Why SQLite over MongoDB/Postgres
+### 2. Why SQLite over MongoDB/Postgres
 
-A grader runs one command (`python -m scripts.seed`) and gets a file. No
+The system is designed for simplicity and ease of use in a hackathon/demo environment. A user runs one command (`python -m scripts.seed`) and immediately gets a fully functional database.
 
 ![Schema](data/er.png)
 
-Docker, no daemon, no connection string. At ~450 rows the entire catalogue
-fits comfortably in a single `SELECT ... WHERE ... LIMIT`, so there is no
-performance case for anything heavier.
+There is no need for Docker, daemon processes, or complex connection strings. At ~450 rows, the entire catalogue fits comfortably in a single `SELECT ... WHERE ... LIMIT` query, meaning there is no performance justification for a heavier database engine.
 
-The threshold where this stops being true: multiple concurrent writers (a
-real marketplace would have wrong-lock-behavior issues under
-`sqlite3`'s single-writer model), a catalogue past roughly 100k-1M rows
-where an index-less `LIKE` scan starts costing real latency, or a need for
-managed replication/backups. Any of those would justify moving to Postgres;
-none of them apply to a ~450-row hackathon catalogue.
+**When to scale:** This architecture is sufficient until the system requires:
+- Multiple concurrent writers (SQLite's single-writer model would struggle).
+- A catalogue exceeding roughly 100k-1M rows where index-less `LIKE` scans impact latency.
+- Managed replication and backups.
 
-## Why no embeddings / vector store
+### 3. The Deliberate Absence of Vector Embeddings
 
-The "fuzzy concept" and "vague intent" query types look like they want
-semantic search, but at 450 rows and a fixed ~20-column schema, they're
-actually satisfied by two much cheaper mechanisms:
+While "fuzzy concept" and "vague intent" queries often suggest semantic search, the scale of this project (450 rows, fixed schema) allows for cheaper, deterministic mechanisms:
+- **Fuzzy concepts** ("family car", "high safety") map to a **fixed, small vocabulary**. `app/concepts.py` acts as a direct lookup table, completely bypassing the need for similarity search.
+- **Vague intent** ("something reliable for city commuting") degrades gracefully to a standard `LIKE` scan over the `description` field. This is highly effective for a curated catalogue built from template text.
 
-- Fuzzy concepts ("family car", "high safety") are a **fixed, small
-  vocabulary** -- `app/concepts.py` is a lookup table, not a similarity
-  search problem.
-- Vague intent ("something reliable for city commuting") degrades to a
-  `LIKE` scan over `description`, which is exact enough for a demo
-  catalogue built from ~40 curated templates.
+A vector store would introduce an external dependency, require an index-build step, and create a new failure mode (embedding model unavailability) for a problem this dataset does not have.
 
-A vector store adds a dependency, an index-build step, and a new failure
-mode (embedding model unavailable) to solve a problem this data doesn't
-have. Deliberate simplicity here is a design choice, not a shortcut --
-revisit it if the catalogue grows past curated templates into genuinely
-free-form listing text, or past low tens of thousands of rows where lexical
-`LIKE` recall starts falling off.
+### 4. The Fallback Strategy
 
-## Why the fallback parser exists
+The application includes an offline fallback parser (`app/fallback_parser.py`) for two key reasons:
+1. **High Availability:** If `GEMINI_API_KEY` is unset, rate-limited, or the network drops during a demo, `/search` continues to serve results instead of throwing 500 errors. (Append `?no_llm=true` to force this path for demonstration purposes).
+2. **A Correctness Oracle:** `app/concepts.py` is consumed by both the fallback parser directly and the LLM via its system prompt. Evaluating both paths against the same test suite ensures that concept definitions remain consistent across both execution methods.
 
-Two reasons, not one:
+### 5. Smart Relaxation Strategy
 
-1. **Availability.** If `GEMINI_API_KEY` is unset, the key is rate-limited,
-   or the network is down mid-demo, `/search` keeps answering instead of
-   500ing. `?no_llm=true` forces this path explicitly so it can be
-   demonstrated on purpose, not just discovered by accident.
-2. **A correctness oracle.** `app/concepts.py` is consumed by both
-   `app/fallback_parser.py` directly and by `app/llm_parser.py`'s system
-   prompt. `tests/eval.py` runs the same query set through both paths, so a
-   regression in the LLM's understanding of a concept and a regression in
-   the regex parser's understanding of the same concept show up as the same
-   kind of failure, against the same ground truth.
+To prevent frustrating empty result sets, `app/relaxation.py` incrementally widens or drops constraints in a fixed, logical order. The cheapest concessions are made first:
 
-## The relaxation strategy
+1. Widen `price_max` by 25% (budgets are usually soft ceilings).
+2. Drop `km_max` ("low km" is a preference, not a strict requirement).
+3. Drop `safety_rating_min` (typically derived from fuzzy concepts).
+4. Drop `seats_min`.
+5. Drop `transmission` (cross-transmission equivalents exist).
+6. Drop `fuel_type`.
+7. Drop `body_type`.
+8. Drop `keywords` (free text is less strict than named entities).
+9. Drop `features_any`.
+10. Drop `make` / `model` / `city` / `color` (Identity is dropped last, as it fundamentally changes the requested entity).
 
-`app/relaxation.py` widens or drops constraints one at a time, in a fixed
-order, until something matches or every step has been tried, cheapest
-concession first:
+Every executed relaxation step is documented in plain English within the `relaxed` response field, providing full transparency to the client.
 
-1. widen `price_max` by 25% -- a stated budget is usually a soft ceiling
-2. drop `km_max` -- "low km" is a preference, not a hard requirement
-3. drop `safety_rating_min` -- typically derived from a fuzzy concept, not stated directly
-4. drop `seats_min` -- same, from "family car"
-5. drop `transmission` -- plenty of cross-transmission equivalents exist
-6. drop `fuel_type`
-7. drop `body_type`
-8. drop `keywords` -- the loosest signal (free text) gives way before named entities
-9. drop `features_any`
-10. drop `make` / `model` / `city` / `color` -- these name a specific real
-    thing; identity is the last thing given up, because dropping it returns
-    vehicles unrelated to what was actually asked
+---
 
-Every step that fires is recorded in the `relaxed` response field in plain
-English, so a client (or a judge) can see exactly what was given up rather
-than silently receiving a different query's results.
+## Known Limitations
 
-## Honest limitations
-
-- **Comparative queries** ("cheaper than a Creta") aren't handled -- there's
-  no concept of resolving one listing's price as a bound for a filter.
-- **Multi-turn context** doesn't exist. Every `/search` call is independent;
-  "what about in blue?" as a follow-up has no memory of the prior query.
-- **Negation** ("not white", "no CNG") isn't parsed. Both the concept table
-  and the regex parser are additive-only.
-- **Ambiguous makes/models**: a few real model names collide with ordinary
-  English words (Honda **City**, Tata **Punch**, Jeep **Compass**). The
-  fallback parser only treats these as a model mention when the make is
-  also named, so "something reliable for **city** commuting" correctly
-  falls through to the vague-intent keyword path -- but a query like "punch
-  it" would not be recognized as asking about a Tata Punch.
-- **"mileage" overloads two real-world meanings.** Indian colloquial usage
-  sometimes means "distance already driven" and sometimes means "fuel
-  economy." `app/concepts.py` deliberately splits these ("low mileage" / "less
-  driven" -> `km_max`, "fuel efficient" -> `mileage_min`) to avoid the
-  ambiguity, but a bare "good mileage" query relies on that exact phrasing
-  being in the concept table rather than a general understanding of the word.
-- **EV "mileage"** is stored as a normalised efficiency score in the same
-  column used for kmpl (see `app/catalog.py`) so the `fuel_efficient`
-  concept treats EVs sensibly. It is not a real kmpl figure and shouldn't be
-  read as one.
-
-```
+- **Comparative Queries:** Queries like "cheaper than a Creta" are not supported, as there is no mechanism to resolve a specific listing's price dynamically into a bound for a filter.
+- **Multi-turn Context:** The service is entirely stateless. Follow-up queries (e.g., "what about in blue?") lack context of the prior query.
+- **Negation Parsing:** Phrases like "not white" or "no CNG" are not natively parsed. Both the concept table and the regex parser operate on additive logic only.
+- **Ambiguous Makes/Models:** Some vehicle models share names with common English words (Honda **City**, Tata **Punch**, Jeep **Compass**). The fallback parser strictly requires the manufacturer name to be present to identify these models. Thus, "city commuting" triggers vague-intent search, but "punch it" will not recognize the Tata Punch.
+- **Colloquial "Mileage" Overload:** In Indian usage, "mileage" can mean either "distance driven" or "fuel economy". `app/concepts.py` specifically maps explicit phrasing ("less driven" -> `km_max`, "fuel efficient" -> `mileage_min`) to avoid ambiguity.
+- **EV "Mileage" Storage:** Electric vehicle efficiency is stored as a normalized score within the same column used for Internal Combustion Engine (ICE) `kmpl` to ensure `fuel_efficient` concepts map correctly. This is not a literal `kmpl` metric.
