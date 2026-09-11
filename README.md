@@ -1,140 +1,68 @@
-```markdown
 # AI Vehicle Search Engine
 
-A backend service where you send a sentence and get back matching vehicles
-**plus the interpretation** of what was asked. See `requirement.md` for the
-original brief and `DESIGN.md` for the reasoning behind the choices below.
+A backend service for searching vehicles using natural language. Send a sentence and get back matching vehicles along with an explanation of how the query was interpreted.
 
-Three query types work out of the box:
+**Key Features:**
+- **Natural Language Parsing**: Uses LLM (Gemini) or a fallback regex parser.
+- **Fuzzy Concept Mapping**: Understands phrases like "family car" or "high safety".
+- **Graceful Relaxation**: Automatically widens search criteria if no vehicles match.
 
-| Type | Example | How it's handled |
-|---|---|---|
-| Hard filters | "Diesel automatic below 80k km" | LLM (or regex fallback) -> filter object -> SQL |
-| Fuzzy concepts | "Family cars with high safety ratings" | Concept table maps the phrase to concrete filter fields |
-| Vague intent | "Something reliable for city commuting" | Keyword match against the description text |
+For architectural details, please see [design.md](design.md).
 
-## Quickstart (5 commands)
+## Quickstart
+
+Run the following commands to set up and start the server:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # optional -- add a Gemini key here for LLM parsing
-python -m scripts.seed          # generates data/vehicles.db (~450 rows, fixed seed)
-uvicorn app.main:app --reload
-
+python -m scripts.seed          # Seed the SQLite database
+uvicorn app.main:app --reload   # Start the server
 ```
 
-Open http://127.0.0.1:8000/docs for interactive Swagger docs.
+Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the interactive Swagger documentation.
 
-**Runs with zero setup and no API key.** Without `GEMINI_API_KEY` set, every
-`/search` call automatically uses the offline regex/keyword fallback parser
-instead of erroring out (`parser: "fallback"` in the response). Get a free
-key at https://aistudio.google.com/apikey if you want the LLM path too.
+*Note: The service runs perfectly without an API key using the built-in offline parser. To enable the LLM parser, copy `.env.example` to `.env` and add your `GEMINI_API_KEY`.*
 
-## Environment variables
+## Environment Variables
 
-All optional -- copy `.env.example` to `.env` and edit as needed.
+Copy `.env.example` to `.env` to configure these optional variables:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `GEMINI_API_KEY` | *(empty)* | If unset, the service always uses the offline fallback parser |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Any Gemini model that supports `generateContent` + `response_schema` |
-| `GEMINI_TIMEOUT_SECONDS` | `8` | Request timeout before falling back to the offline parser |
-| `DB_PATH` | `data/vehicles.db` | SQLite file location |
+- `GEMINI_API_KEY`: Enables LLM parsing (get one at [Google AI Studio](https://aistudio.google.com/apikey)).
+- `GEMINI_MODEL`: Model to use (default: `gemini-2.0-flash`).
+- `GEMINI_TIMEOUT_SECONDS`: Request timeout before fallback (default: `8`).
+- `DB_PATH`: SQLite file location (default: `data/vehicles.db`).
 
 ## Endpoints
 
-### `POST /search` -- natural-language search
+### `POST /search` (Natural Language Search)
+
+Search for vehicles using plain English.
 
 ```bash
-curl -s -X POST "[http://127.0.0.1:8000/search](http://127.0.0.1:8000/search)" \
+curl -s -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{"query": "Show SUVs under 15L"}'
-
 ```
+*Tip: Append `?no_llm=true` to the URL to force the offline fallback parser.*
 
-Add `?no_llm=true` to force the offline parser even when a key is configured:
+### `POST /search/filters` (Structured Search)
+
+Search using exact JSON filters without natural language processing.
 
 ```bash
-curl -s -X POST "[http://127.0.0.1:8000/search?no_llm=true](http://127.0.0.1:8000/search?no_llm=true)" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Show SUVs under 15L"}'
-
-```
-
-Response shape:
-
-```json
-{
-  "query": "Show SUVs under 15L",
-  "interpreted_filters": {"body_type": ["SUV", "Compact SUV"], "price_max": 1500000, "limit": 20, "...": null},
-  "explanation": "Looking for vehicles with body type in SUV, Compact SUV; price at most ₹1,500,000.",
-  "parser": "fallback",
-  "sql": "SELECT * FROM vehicles WHERE body_type IN (?, ?) AND price <= ? LIMIT ?",
-  "sql_params": ["SUV", "Compact SUV", 1500000, 20],
-  "relaxed": [],
-  "count": 20,
-  "results": ["... vehicle rows ..."],
-  "latency_ms": 3.42
-}
-
-```
-
-| Field | Why it matters |
-| --- | --- |
-| `interpreted_filters` | Exactly what the query was understood to mean |
-| `explanation` | One sentence in plain English |
-| `parser` | `"llm"` or `"fallback"` -- proves the degradation path works |
-| `sql` | The parameterized statement actually executed |
-| `relaxed` | Set when a constraint was widened/dropped to avoid an empty result |
-
-## Architecture
-
-![Architecture](data/architecture.png)
-
-### `POST /search/filters` -- structured search, no LLM involved
-
-```bash
-curl -s -X POST "[http://127.0.0.1:8000/search/filters](http://127.0.0.1:8000/search/filters)" \
+curl -s -X POST http://127.0.0.1:8000/search/filters \
   -H "Content-Type: application/json" \
   -d '{"fuel_type": ["Diesel"], "seats_min": 7, "limit": 5}'
-
 ```
 
-Body is a `VehicleFilter` (same shape as `interpreted_filters` above). Same
-response envelope as `/search`, with `"parser": "explicit"`.
+### Other Endpoints
 
-### `GET /vehicles/{id}` -- single vehicle detail
+- **`GET /vehicles/{id}`**: Fetch details of a single vehicle.
+- **`GET /stats`**: View catalog statistics and breakdowns.
+- **`GET /health`**: Check system status and LLM availability.
+- **`GET /examples`**: Get sample demo queries.
+- **`POST /cache/reset`**: Clear the in-memory query cache.
 
-```bash
-curl -s [http://127.0.0.1:8000/vehicles/1](http://127.0.0.1:8000/vehicles/1)
-
-```
-
-### `GET /stats` -- catalogue totals and breakdowns
-
-```bash
-curl -s [http://127.0.0.1:8000/stats](http://127.0.0.1:8000/stats)
-
-```
-
-### `GET /health` -- status, whether the LLM path is enabled, which model
-
-```bash
-curl -s [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-# {"status":"ok","llm_enabled":false,"llm_model":null,"vehicle_count":453}
-
-```
-
-### `GET /examples` -- sample demo queries
-
-```bash
-curl -s [http://127.0.0.1:8000/examples](http://127.0.0.1:8000/examples)
-
-```
-
-### `POST /cache/reset` -- clear the in-memory query cache
-
-```
-
-```
+---
+*For tests and evaluation harness, run `python -m tests.eval`.*
