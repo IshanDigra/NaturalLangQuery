@@ -1,140 +1,127 @@
-```markdown
 # AI Vehicle Search Engine
 
-A backend service where you send a sentence and get back matching vehicles
-**plus the interpretation** of what was asked. See `requirement.md` for the
-original brief and `DESIGN.md` for the reasoning behind the choices below.
+A production-grade backend service that transforms natural language queries into SQL database searches. Users can send free-form sentences and receive matching vehicles, along with a clear explanation of how the query was interpreted.
 
-Three query types work out of the box:
+See `design.md` for a comprehensive overview of the system architecture and design principles.
 
-| Type | Example | How it's handled |
+## Features
+
+Three query types work out of the box, seamlessly resolving varying levels of intent:
+
+| Type | Example | Handling Mechanism |
 |---|---|---|
-| Hard filters | "Diesel automatic below 80k km" | LLM (or regex fallback) -> filter object -> SQL |
-| Fuzzy concepts | "Family cars with high safety ratings" | Concept table maps the phrase to concrete filter fields |
-| Vague intent | "Something reliable for city commuting" | Keyword match against the description text |
+| **Hard filters** | "Diesel automatic below 80k km" | Extracted via LLM (or regex fallback) into a structured filter object, then converted to parameterized SQL. |
+| **Fuzzy concepts** | "Family cars with high safety ratings" | Mapped via a concept table directly to concrete database fields (e.g., `seats >= 6`, `safety_rating >= 4`). |
+| **Vague intent** | "Something reliable for city commuting" | Executes a keyword match against the vehicle description text for best-effort semantic search. |
 
-## Quickstart (5 commands)
+## Quickstart & Setup
 
+Follow these step-by-step instructions to get the service running locally.
+
+### 1. Prerequisites
+Ensure you have Python 3.9+ installed on your machine.
+
+### 2. Virtual Environment
+It's recommended to run the service within an isolated virtual environment.
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # optional -- add a Gemini key here for LLM parsing
-python -m scripts.seed          # generates data/vehicles.db (~450 rows, fixed seed)
-uvicorn app.main:app --reload
-
 ```
 
-Open http://127.0.0.1:8000/docs for interactive Swagger docs.
+### 3. Configuration
+Copy the example environment file to create your local `.env`.
+```bash
+cp .env.example .env
+```
+*(Optional)* Add a Gemini API key to `.env` (`GEMINI_API_KEY=your_key_here`) for LLM parsing. Without a key, the service will automatically fallback to an offline regex/keyword parser. You can get a free key at [Google AI Studio](https://aistudio.google.com/apikey).
 
-**Runs with zero setup and no API key.** Without `GEMINI_API_KEY` set, every
-`/search` call automatically uses the offline regex/keyword fallback parser
-instead of erroring out (`parser: "fallback"` in the response). Get a free
-key at https://aistudio.google.com/apikey if you want the LLM path too.
+### 4. Database Seeding
+Initialize the SQLite database with curated mock data.
+```bash
+python -m scripts.seed
+```
+This generates `data/vehicles.db` containing ~450 vehicle rows (using a fixed random seed for reproducibility).
 
-## Environment variables
+### 5. Running the Service
+Start the FastAPI server.
+```bash
+uvicorn app.main:app --reload
+```
 
-All optional -- copy `.env.example` to `.env` and edit as needed.
+Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) in your browser to interact with the API via the **Swagger UI**.
+
+---
+
+## Environment Variables
+
+All variables are optional. Define them in your `.env` file to customize behavior.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | *(empty)* | If unset, the service always uses the offline fallback parser |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Any Gemini model that supports `generateContent` + `response_schema` |
-| `GEMINI_TIMEOUT_SECONDS` | `8` | Request timeout before falling back to the offline parser |
-| `DB_PATH` | `data/vehicles.db` | SQLite file location |
+| `GEMINI_API_KEY` | *(empty)* | If unset, the service strictly uses the offline fallback parser. |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | The Gemini model to use for LLM parsing (must support `generateContent` + `response_schema`). |
+| `GEMINI_TIMEOUT_SECONDS` | `8` | The request timeout limit before reverting to the offline parser. |
+| `DB_PATH` | `data/vehicles.db` | The filepath to the SQLite database. |
 
-## Endpoints
+---
 
-### `POST /search` -- natural-language search
+## API Documentation
 
+### Natural Language Search
+`POST /search`
+
+Processes a natural language string and returns matched vehicles alongside the system's interpretation.
+
+**Request**
 ```bash
-curl -s -X POST "[http://127.0.0.1:8000/search](http://127.0.0.1:8000/search)" \
+curl -s -X POST "http://127.0.0.1:8000/search" \
   -H "Content-Type: application/json" \
   -d '{"query": "Show SUVs under 15L"}'
-
 ```
+*Note: Append `?no_llm=true` to the URL to force the offline parser, even if a key is configured.*
 
-Add `?no_llm=true` to force the offline parser even when a key is configured:
+**Response Details**
+- `interpreted_filters`: The exact parsed constraints.
+- `explanation`: A human-readable summary of the query interpretation.
+- `parser`: Indicates `"llm"` or `"fallback"`.
+- `sql`: The parameterized SQL query executed.
+- `relaxed`: Explains any constraints that were widened or dropped to avoid returning empty results.
+- `results`: The matching vehicle rows.
 
+### Structured Search
+`POST /search/filters`
+
+Performs a strict database search bypassing the LLM completely.
+
+**Request**
 ```bash
-curl -s -X POST "[http://127.0.0.1:8000/search?no_llm=true](http://127.0.0.1:8000/search?no_llm=true)" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Show SUVs under 15L"}'
-
-```
-
-Response shape:
-
-```json
-{
-  "query": "Show SUVs under 15L",
-  "interpreted_filters": {"body_type": ["SUV", "Compact SUV"], "price_max": 1500000, "limit": 20, "...": null},
-  "explanation": "Looking for vehicles with body type in SUV, Compact SUV; price at most ₹1,500,000.",
-  "parser": "fallback",
-  "sql": "SELECT * FROM vehicles WHERE body_type IN (?, ?) AND price <= ? LIMIT ?",
-  "sql_params": ["SUV", "Compact SUV", 1500000, 20],
-  "relaxed": [],
-  "count": 20,
-  "results": ["... vehicle rows ..."],
-  "latency_ms": 3.42
-}
-
-```
-
-| Field | Why it matters |
-| --- | --- |
-| `interpreted_filters` | Exactly what the query was understood to mean |
-| `explanation` | One sentence in plain English |
-| `parser` | `"llm"` or `"fallback"` -- proves the degradation path works |
-| `sql` | The parameterized statement actually executed |
-| `relaxed` | Set when a constraint was widened/dropped to avoid an empty result |
-
-## Architecture
-
-![Architecture](data/architecture.png)
-
-### `POST /search/filters` -- structured search, no LLM involved
-
-```bash
-curl -s -X POST "[http://127.0.0.1:8000/search/filters](http://127.0.0.1:8000/search/filters)" \
+curl -s -X POST "http://127.0.0.1:8000/search/filters" \
   -H "Content-Type: application/json" \
   -d '{"fuel_type": ["Diesel"], "seats_min": 7, "limit": 5}'
-
 ```
 
-Body is a `VehicleFilter` (same shape as `interpreted_filters` above). Same
-response envelope as `/search`, with `"parser": "explicit"`.
+### Additional Endpoints
 
-### `GET /vehicles/{id}` -- single vehicle detail
+- **`GET /vehicles/{id}`**: Retrieve detailed information for a single vehicle.
+- **`GET /stats`**: Returns catalogue totals and category breakdowns.
+- **`GET /health`**: Returns system status, indicating if the LLM path is enabled and which model is configured.
+- **`GET /examples`**: Returns sample demo queries for testing.
+- **`POST /cache/reset`**: Clears the in-memory query cache.
 
-```bash
-curl -s [http://127.0.0.1:8000/vehicles/1](http://127.0.0.1:8000/vehicles/1)
+---
 
-```
+## Testing & Evaluation
 
-### `GET /stats` -- catalogue totals and breakdowns
+The project includes an evaluation harness to benchmark parser accuracy against a suite of test queries. It verifies that interpreted constraints correctly map to expected values.
 
-```bash
-curl -s [http://127.0.0.1:8000/stats](http://127.0.0.1:8000/stats)
+- Run with the **fallback parser only** (No API key needed):
+  ```bash
+  python -m tests.eval
+  ```
+- Run with the **Gemini LLM parser** (Requires `GEMINI_API_KEY` in your `.env`):
+  ```bash
+  python -m tests.eval --llm
+  ```
 
-```
-
-### `GET /health` -- status, whether the LLM path is enabled, which model
-
-```bash
-curl -s [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-# {"status":"ok","llm_enabled":false,"llm_model":null,"vehicle_count":453}
-
-```
-
-### `GET /examples` -- sample demo queries
-
-```bash
-curl -s [http://127.0.0.1:8000/examples](http://127.0.0.1:8000/examples)
-
-```
-
-### `POST /cache/reset` -- clear the in-memory query cache
-
-```
-
-```
+Add or modify test cases in `tests/eval_queries.json`.
