@@ -1,0 +1,48 @@
+from app.enums import BodyType, FuelType, Transmission
+
+CATALOG = [
+    {"make": "Hyundai", "model": "i20", "body_type": BodyType.HATCHBACK, "seats": 5},
+    {"make": "Hyundai", "model": "Creta", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Hyundai", "model": "Tucson", "body_type": BodyType.SUV, "seats": 5},
+    {"make": "Maruti Suzuki", "model": "Swift", "body_type": BodyType.HATCHBACK, "seats": 5},
+    {"make": "Maruti Suzuki", "model": "Brezza", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Maruti Suzuki", "model": "Ertiga", "body_type": BodyType.MUV, "seats": 7},
+    {"make": "Tata", "model": "Punch", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Tata", "model": "Nexon", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Tata", "model": "Harrier", "body_type": BodyType.SUV, "seats": 5},
+    {"make": "Tata", "model": "Safari", "body_type": BodyType.SUV, "seats": 7},
+    {"make": "Mahindra", "model": "Thar", "body_type": BodyType.SUV, "seats": 4},
+    {"make": "Mahindra", "model": "XUV700", "body_type": BodyType.SUV, "seats": 7},
+    {"make": "Mahindra", "model": "Scorpio-N", "body_type": BodyType.SUV, "seats": 7},
+    {"make": "Kia", "model": "Seltos", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Kia", "model": "Sonet", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Kia", "model": "Carens", "body_type": BodyType.MUV, "seats": 7},
+    {"make": "Toyota", "model": "Fortuner", "body_type": BodyType.SUV, "seats": 7},
+    {"make": "Toyota", "model": "Innova Crysta", "body_type": BodyType.MUV, "seats": 7},
+    {"make": "Honda", "model": "City", "body_type": BodyType.SEDAN, "seats": 5},
+    {"make": "Honda", "model": "Amaze", "body_type": BodyType.SEDAN, "seats": 5},
+    {"make": "Skoda", "model": "Slavia", "body_type": BodyType.SEDAN, "seats": 5},
+    {"make": "Skoda", "model": "Kushaq", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Volkswagen", "model": "Virtus", "body_type": BodyType.SEDAN, "seats": 5},
+    {"make": "Volkswagen", "model": "Taigun", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "BMW", "model": "3 Series", "body_type": BodyType.LUXURY, "seats": 5},
+    {"make": "BMW", "model": "X1", "body_type": BodyType.LUXURY, "seats": 5},
+    {"make": "Mercedes-Benz", "model": "C-Class", "body_type": BodyType.LUXURY, "seats": 5},
+    {"make": "Mercedes-Benz", "model": "GLA", "body_type": BodyType.LUXURY, "seats": 5},
+    {"make": "Audi", "model": "A4", "body_type": BodyType.LUXURY, "seats": 5},
+    {"make": "Audi", "model": "Q3", "body_type": BodyType.LUXURY, "seats": 5},
+    {"make": "MG", "model": "Hector", "body_type": BodyType.SUV, "seats": 5},
+    {"make": "MG", "model": "ZS EV", "body_type": BodyType.SUV, "seats": 5},
+    {"make": "Renault", "model": "Kiger", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Renault", "model": "Triber", "body_type": BodyType.MUV, "seats": 7},
+    {"make": "Nissan", "model": "Magnite", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Jeep", "model": "Compass", "body_type": BodyType.SUV, "seats": 5},
+    {"make": "Ford", "model": "Endeavour", "body_type": BodyType.SUV, "seats": 7},
+    {"make": "Ford", "model": "EcoSport", "body_type": BodyType.COMPACT_SUV, "seats": 5},
+    {"make": "Mini", "model": "Cooper Convertible", "body_type": BodyType.CONVERTIBLE, "seats": 4},
+    {"make": "Porsche", "model": "911", "body_type": BodyType.COUPE, "seats": 2},
+]
+
+CITIES = ["Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata", "Pune", "Ahmedabad"]
+COLORS = ["White", "Silver", "Grey", "Black", "Red", "Blue", "Brown"]
+FEATURES = ["Sunroof", "Touchscreen", "Alloy Wheels", "Leather Seats", "Ventilated Seats", "ADAS", "360 Camera", "Airbags", "Automatic Climate Control", "Cruise Control"]
