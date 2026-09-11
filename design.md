@@ -78,6 +78,8 @@ tests/
 ```markdown
 # Design notes
 
+![Architecture](data/architecture.png)
+
 ## Why the LLM never writes SQL
 
 
@@ -105,6 +107,9 @@ three things at once:
 ## Why SQLite over MongoDB/Postgres
 
 A grader runs one command (`python -m scripts.seed`) and gets a file. No
+
+![Schema](data/er.png)
+
 Docker, no daemon, no connection string. At ~450 rows the entire catalogue
 fits comfortably in a single `SELECT ... WHERE ... LIMIT`, so there is no
 performance case for anything heavier.
