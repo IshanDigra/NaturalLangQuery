@@ -1,0 +1,30 @@
+[
+  {
+    "query": "Show SUVs under 15L",
+    "expected": {
+      "body_type": ["SUV", "Compact SUV"],
+      "price_max": 1500000
+    }
+  },
+  {
+    "query": "Family cars with high safety ratings",
+    "expected": {
+      "seats_min": 6,
+      "safety_rating_min": 4
+    }
+  },
+  {
+    "query": "Diesel automatic below 80k km",
+    "expected": {
+      "fuel_type": ["Diesel"],
+      "transmission": ["Automatic"],
+      "km_max": 80000
+    }
+  },
+  {
+    "query": "Something reliable for city commuting",
+    "expected": {
+      "keywords": ["reliable", "city", "commuting"]
+    }
+  }
+]

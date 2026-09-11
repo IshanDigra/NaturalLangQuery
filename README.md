@@ -88,6 +88,10 @@ Response shape:
 | `sql` | The parameterized statement actually executed |
 | `relaxed` | Set when a constraint was widened/dropped to avoid an empty result |
 
+## Architecture
+
+![Architecture](data/architecture.png)
+
 ### `POST /search/filters` -- structured search, no LLM involved
 
 ```bash
